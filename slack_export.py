@@ -5,9 +5,12 @@ import os
 import io
 import shutil
 import copy
+import re
+import requests
 from datetime import datetime
 from pick import pick
 from time import sleep
+
 
 # fetches the complete message history for a channel/group/im
 #
@@ -81,6 +84,24 @@ def writeMessageFile( fileName, messages ):
     with open(fileName, 'w') as outFile:
         json.dump( messages, outFile, indent=4)
 
+def downloadPrivateFile( url, roomDir ):
+    f_match = re.match(r".*/(.*)/(.*)$", url)
+    filename = os.path.join(roomDir, f_match.group(1), f_match.group(2))
+    directory = os.path.join(roomDir, f_match.group(1))
+
+    headers = {
+        'Authorization': "Bearer " + slack.files.token
+    }
+    response = slack.files.session.get(url=url, headers=headers, stream=True)
+
+    # Throw an error for bad status codes
+    response.raise_for_status()
+
+    mkdir(directory)
+    with open(filename, 'wb') as handle:
+        for block in response.iter_content(1024):
+            handle.write(block)
+    
 
 # parse messages by date
 def parseMessages( roomDir, messages, roomType ):
@@ -108,6 +129,13 @@ def parseMessages( roomDir, messages, roomType ):
             newRoomPath = roomDir
             channelRename( oldRoomPath, newRoomPath )
 
+        # get url_private files
+        if 'files' in message:
+            for file in message['files']:
+                if 'url_private' in file:
+                    url_private = file['url_private']
+                    downloadPrivateFile(url_private, roomDir)
+
         currentMessages.append( message )
     outFileName = u'{room}/{file}.json'.format( room = roomDir, file = currentFileDate )
     writeMessageFile( outFileName, currentMessages )
@@ -130,9 +158,9 @@ def fetchPublicChannels(channels):
         return
 
     for channel in channels:
-        channelDir = channel['name'].encode('utf-8')
+        channelDir = channel['name'] #.encode('utf-8')
         print(u"Fetching history for Public Channel: {0}".format(channelDir))
-        channelDir = channel['name'].encode('utf-8')
+        channelDir = channel['name'] #.encode('utf-8')
         mkdir( channelDir )
         messages = getHistory(slack.channels, channel['id'])
         parseMessages( channelDir, messages, 'channel')
@@ -338,7 +366,8 @@ if __name__ == "__main__":
     userNamesById = {}
     userIdsByName = {}
 
-    slack = Slacker(args.token)
+    slack_session = requests.Session()
+    slack = Slacker(args.token, session=slack_session)
     testAuth = doTestAuth()
     tokenOwnerId = testAuth['user_id']
 
